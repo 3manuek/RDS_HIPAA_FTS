@@ -1,5 +1,5 @@
 
-> This article is still WIP 
+> This article is still WIP
 
 # HIPPA, RDS and FTS applied for searching on PostgreSQL
 
@@ -37,7 +37,7 @@ aws configure
 
 ```
 aws rds create-db-instance --db-instance-identifier dbtest1 --db-name dbtest --db-instance-class db.t1.micro --engine postgres \
---master-username dbtestuser --master-user-password DB1234DB --engine-version 9.4.5 \
+--master-username dbtestuser --master-user-password <password> --engine-version 9.4.5 \
  --allocated-storage 5 --region us-east-1
 ```
 
