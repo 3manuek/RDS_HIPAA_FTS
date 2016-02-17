@@ -1,4 +1,6 @@
 
+> This article is still WIP 
+
 # HIPPA, RDS and FTS applied for searching on PostgreSQL
 
 I stepped with a case that required some attention on privacy regulations (HIPPA)
