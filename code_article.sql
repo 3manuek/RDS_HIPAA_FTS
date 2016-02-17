@@ -27,6 +27,9 @@ DROP TABLE __person__;
 DROP TABLE __person__map;
 DROP TABLE __person__pgp;
 
+-- TODO
+-- Add indexable columns like region, store , etc.
+
 create table __person__
   (id serial PRIMARY KEY,
    fname bytea,
@@ -46,6 +49,11 @@ create table __person__pgp
       patology bytea,
       _FTS bytea -- this is the column storing the encrypted tsvector
 );
+
+-- TODO:
+-- table map remove _FTS field, add keyid.
+-- doing that, now the trigger can select which key use for each row
+-- You can also, set a key per table basis instead row based.
 
 
 create table __person__map
@@ -176,8 +184,8 @@ BEGIN
                            setweight(to_tsvector(NEW.auth_drugs::text), 'C') ||
                            setweight(to_tsvector(NEW.patology), 'D')
                          )::text, secret) ;
-        -- Now we encrypt the rest of the columns
         NEW_MAP.fname := pgp_pub_encrypt(NEW.fname, secret);
+        -- Now we encrypt the rest of the columns
         NEW_MAP.lname := pgp_pub_encrypt(NEW.lname, secret);
         NEW_MAP.auth_drugs := pgp_pub_encrypt(NEW.auth_drugs::text, secret);
         NEW_MAP.description := pgp_pub_encrypt(NEW.description, secret);
@@ -212,3 +220,6 @@ INSERT INTO __person__map
 -- Basic Test
 
 select pgp_pub_decrypt(_FTS, priv,'') from __person__PGP, keys limit 1;
+
+-- TODO:
+-- Show trigram features, allowing to deal with mispellings and similarity
