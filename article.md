@@ -47,8 +47,8 @@ I won't recommend to have this kind of things automated from the same platform
 where you do the deploys. I assume that if you are reading the current section,
 you are not into AWS as much to automate-everything. So, I'll recommend you to go
 through the web interface once, and create your user from the IAM section, grant
-it enough permissions and download the credentials. With the creds, you are able
-to fill up the configuration using the following:
+it enough permissions (`AmazonRDSFullAccess`) and download the credentials.
+With the creds, you are able to fill up the configuration using the following:
 
 ```
 aws configure
@@ -91,13 +91,13 @@ aws rds create-db-security-group --region us-east-1 \
 
 aws rds authorize-db-security-group-ingress  --db-security-group-name pgtest --cidrip 0.0.0.0/0
 ```
-
-If this happens:
+If the following error is prompted, you proabbly missed to add the corresponding
+permissions over the IAM user to create RDS instances:
 ```
 A client error (AccessDenied) occurred when calling the CreateDBInstance operation: User: arn:aws:iam::984907411244:user/emanuelASUS is not authorized to perform: rds:CreateDBInstance on resource: arn:aws:rds:sa-east-1:984907411244:db:dbtest
 ```
 
-... attach `AmazonRDSFullAccess` policy to the IAM user . Wait a bit, then try the following:
+Wait until the intance come online, then try the following:
 
 ```
 aws rds describe-db-instances --region us-east-1 --db-instance-identifier dbtest1 | grep -i -A3  endp
@@ -117,7 +117,14 @@ Let's generate the GPG keys:
 
 ```
 gpg --gen-key   # choose DSA and Elgamal
-gpg --list-secret-keys  # grab the key id of the key created
+
+emanuel@3laptop ~/ $ gpg --list-secret-keys
+/home/emanuel/.gnupg/secring.gpg
+--------------------------------
+sec   2048D/E65FF517 2016-02-17
+uid                  Emanuel (This is a test key for an article) <calvo@pythian.com>
+ssb   2048g/5C1EA9AB 2016-02-17
+
 gpg --export E65FF517 > dummyKeys/public.key
 gpg --export-secret-keys E65FF517 > dummyKeys/private.key
 
@@ -135,12 +142,17 @@ CREATE TABLE keys (
 );
 ```
 
+Importing the local file into the RDS server. The next steps is done using the Large
+Object functions, which allow us to send a local file to the server using a simple
+`psql` command.
+
 ```
 dbtest=> \lo_import '/home/emanuel/dummyKeys/public.key' pubk
 lo_import 16438
 dbtest=> \lo_import '/home/emanuel/dummyKeys/private.key' privk
 lo_import 16439
 ```
+Now, let's insert those files directly into the `keys` table.
 
 ```
 INSERT INTO keys VALUES( pgp_key_id(lo_get(16438)) ,lo_get(16438), lo_get(16439));
