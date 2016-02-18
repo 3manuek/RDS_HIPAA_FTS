@@ -12,9 +12,9 @@ CREATE TABLE keys (
 );
 
 
--- dbtest=> \lo_import '/home/emanuel/imedicare/data/public.key' pubk
+-- dbtest=> \lo_import '/home/emanuel/dummyKeys/public.key' pubk
 -- lo_import 16438
--- dbtest=> \lo_import '/home/emanuel/imedicare/data/private.key' privk
+-- dbtest=> \lo_import '/home/emanuel/dummyKeys/private.key' privk
 -- lo_import 16439
 
 
