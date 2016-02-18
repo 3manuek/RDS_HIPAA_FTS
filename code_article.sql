@@ -6,7 +6,7 @@ CREATE EXTENSION pgcrypto;
 
 
 CREATE TABLE keys (
-  keyid varchar(8) PRIMARY KEY,
+  keyid varchar(16) PRIMARY KEY,
   pub bytea,
   priv bytea
 );
@@ -27,6 +27,26 @@ DROP TABLE __person__;
 DROP TABLE __person__map;
 DROP TABLE __person__pgp;
 
+
+
+-- TODO:
+-- table map remove _FTS field, add keyid.
+-- doing that, now the trigger can select which key use for each row
+-- You can also, set a key per table basis instead row based.
+
+
+create table __person__map
+     (
+      keyid varchar(16),
+      fname text,
+      lname text,
+      description text,
+      auth_drugs text[], -- This is an encrypted text vector
+      patology text,
+      _FTS text -- this is the column storing the encrypted tsvector
+);
+
+
 -- TODO
 -- Add indexable columns like region, store , etc.
 
@@ -42,27 +62,13 @@ create table __person__
 
 create table __person__pgp
      (id serial PRIMARY KEY,
+      keyid vachar(16) REFERENCES keys,
       fname bytea,
       lname bytea,
       description bytea,
       auth_drugs bytea, -- This is an encrypted text vector
       patology bytea,
       _FTS bytea -- this is the column storing the encrypted tsvector
-);
-
--- TODO:
--- table map remove _FTS field, add keyid.
--- doing that, now the trigger can select which key use for each row
--- You can also, set a key per table basis instead row based.
-
-
-create table __person__map
-     (fname text,
-      lname text,
-      description text,
-      auth_drugs text[], -- This is an encrypted text vector
-      patology text,
-      _FTS text -- this is the column storing the encrypted tsvector
 );
 
 
@@ -175,7 +181,8 @@ DECLARE
         parsedDrugs text;
 BEGIN
         -- secret := NEW._FTS::bytea; -- Here you are, we take the secret, then we step over it.
-        SELECT pub INTO secret FROM keys WHERE keyid = '76CDA76B5C1EA9AB';
+        -- SELECT pub INTO secret FROM keys WHERE keyid = '76CDA76B5C1EA9AB';
+        SELECT pub INTO secret FROM keys WHERE keyid = NEW.keyid;
 
         NEW_MAP._FTS := pgp_pub_encrypt(
                           (setweight(to_tsvector(NEW.fname) , 'B' ) ||

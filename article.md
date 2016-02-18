@@ -3,12 +3,15 @@
 
 Author: Emanuel Calvo - Pythian
 
-
-# [HIPPA](https://en.wikipedia.org/wiki/Health_Insurance_Portability_and_Accountability_Act), RDS and FTS applied for searching on PostgreSQL
-
+# [HIPPA](https://en.wikipedia.org/wiki/Health_Insurance_Portability_and_Accountability_Act), [RDS](https://aws.amazon.com/rds/postgresql/) and FTS applied for searching on PostgreSQL
 
 I stepped with a case that required some attention on privacy regulations (HIPPA)
-and performance issues caused by intensive CPU usage.
+and performance issues caused by intensive CPU usage on RDS.
+
+Implementing encryption on RDS using PGP isn't trivial, and there are a couple of
+warnings before you decide to go forward within raw encryption or PGP functions.
+All the current code and implementation is a _Proof of concept_ and I strongly
+suggest to do your own analysis depending on your scenario.
 
 It isn't easy to handle sometimes the load of encrypting plus using FTS as the
 casts required to accomplish that are kinda incompatible. IMHO encrypted file
@@ -25,47 +28,76 @@ the best.
 Also, keep in mind that the current approach could have issues in a very heavy
 write environments, mainly derived from the logic held by the trigger function.
 
-## Tool scope
+## Tools scope and RDS instance setup
+
+> If you are familiarized with `awscli`, configuring it and creating instances, feel free to skip
+> entirely this section.
+
+The following steps are tested on Linux OS, for more information you can check
+this [link](http://docs.aws.amazon.com/cli/latest/userguide/installing.html).
+
+Installing the `awscli` is easy as:
 
 ```
 pip install awscli
 ```
 
-Create IAM credentials, download them and go through the configure process:
+To create an account, you can use `aws iam create-user --user-name test`. However,
+I won't recommend to have this kind of things automated from the same platform
+where you do the deploys. I assume that if you are reading the current section,
+you are not into AWS as much to automate-everything. So, I'll recommend you to go
+through the web interface once, and create your user from the IAM section, grant
+it enough permissions and download the credentials. With the creds, you are able
+to fill up the configuration using the following:
 
 ```
 aws configure
 ```
 
-> available regions at http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html
+Choosing a default region can make your life easier, however you will see that
+I always will declare the `--region` option in the commands.
+
+> Available regions code can be found at [Regions list](http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html)
+
+Now, let's create an RDS instance. Beware in mind that not all the regions accept
+the classic EC2 security groups permissions, so for this particular test I will
+use `us-east-1` region.
 
 ```
-aws rds create-db-instance --db-instance-identifier dbtest1 --db-name dbtest --db-instance-class db.t1.micro --engine postgres \
+aws rds create-db-instance --db-instance-identifier dbtest1 \
+--db-name dbtest --db-instance-class db.t1.micro --engine postgres \
 --master-username dbtestuser --master-user-password <password> --engine-version 9.4.5 \
  --allocated-storage 5 --region us-east-1
 ```
 
+
 NOTE 1:
-> Always choose the last patched version  9.4.x
+> Always choose the last patched version  9.4.x. There is an option for RDS to
+> upgrade the patch version always.
 
 NOTE 2:
 > us-east-1 supports classic security groups setting, which is the recommended
-> to run tests like that, without setting up a VPC
+> to run tests like that, without setting up a VPC. If you already have a VPC,
+> you can use whatever region you prefer.
+
+Now, let's create a _too wide open_ security group. Unless you now exactly which
+is your IP for accessing the machines, I'll suggest to go wide open for the test.
+If you have the IP or the range, you can use CIDR/IP as `x.x.x.x/32` or whatever
+range you have.
 
 ```
-aws rds create-db-security-group --region us-east-1 --db-security-group-name pgtest --db-security-group-description "My Test Security Group for RDS postgres"
+aws rds create-db-security-group --region us-east-1 \
+--db-security-group-name pgtest --db-security-group-description "My Test Security Group for RDS postgres"
 
 aws rds authorize-db-security-group-ingress  --db-security-group-name pgtest --cidrip 0.0.0.0/0
-
 ```
-Use CIDR/IP of your current machine as 200.114.131.142/32 also.
 
-
+If this happens:
 ```
 A client error (AccessDenied) occurred when calling the CreateDBInstance operation: User: arn:aws:iam::984907411244:user/emanuelASUS is not authorized to perform: rds:CreateDBInstance on resource: arn:aws:rds:sa-east-1:984907411244:db:dbtest
 ```
 
-Attach policy to the IAM user `AmazonRDSFullAccess`. Wait a bit, then try the following:
+... attach `AmazonRDSFullAccess` policy to the IAM user . Wait a bit, then try the following:
 
 ```
 aws rds describe-db-instances --region us-east-1 --db-instance-identifier dbtest1 | grep -i -A3  endp
@@ -75,7 +107,23 @@ aws rds describe-db-instances --region us-east-1 --db-instance-identifier dbtest
             },
 ```
 
+It takes a bit until the instance is up and running, so take a coffee or a tea (
+  or mate ) before move forward.
+
+
 ## Pre-key setup
+
+Let's generate the GPG keys:
+
+```
+gpg --gen-key   # choose DSA and Elgamal
+gpg --list-secret-keys  # grab the key id of the key created
+gpg --export E65FF517 > dummyKeys/public.key
+gpg --export-secret-keys E65FF517 > dummyKeys/private.key
+
+```
+
+In order to avoid to be redundant, please follow the steps of the [pgcrypto documentation](http://www.postgresql.org/docs/9.4/static/pgcrypto.html).
 
 Let's create the keys table:
 
