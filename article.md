@@ -4,7 +4,8 @@
 Author: Emanuel Calvo - Pythian
 
 
-# HIPPA, RDS and FTS applied for searching on PostgreSQL
+# [HIPPA](https://en.wikipedia.org/wiki/Health_Insurance_Portability_and_Accountability_Act), RDS and FTS applied for searching on PostgreSQL
+
 
 I stepped with a case that required some attention on privacy regulations (HIPPA)
 and performance issues caused by intensive CPU usage.
