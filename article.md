@@ -28,6 +28,34 @@ the best.
 Also, keep in mind that the current approach could have issues in a very heavy
 write environments, mainly derived from the logic held by the trigger function.
 
+In the current article, we are going to show both PGP and raw encryption functions
+from the [pgcrypto](http://www.postgresql.org/docs/9.4/static/pgcrypto.html) extension.
+Please take a time to read about this before proceed to its implementation in
+production.
+
+## What do we have here?
+
+There are a couple of notes to do regarding what is implemented.
+
+- Both raw and PGP functions are used.
+- I considered a per-row key based and a per-table key based. That is, you can
+  either implement a different key per row-groups (you can implement one key per
+  row, but I'm not going that way for clarity sake) or per-table basis (faster,
+  cleaner but probably more insecure).
+- For educational purposes, I'm uploading the private key into a table called
+  `keys`. However, you never -never- want to do this.
+- Raw encryption functions return bytea, doing the job of casting a little bit more
+   dirty that PGP functions.
+- The map table, does not store information. However, you are going to execute your
+   inserts against this one. You will be inserting text data and the trigger
+   function will be casting, processing and encrypting the data into the corresponding
+  table.
+- The key used for this article does not have a secret passphrase, which you probably
+  want to have in critical environments.
+- HIPPA specifies that the encryption happens at communication layer. This is
+  something I'll avoid in this article as RDS uses SSL by default.
+
+
 ## Tools scope and RDS instance setup
 
 > If you are familiarized with `awscli`, configuring it and creating instances, feel free to skip
@@ -116,17 +144,17 @@ It takes a bit until the instance is up and running, so take a coffee or a tea (
 Let's generate the GPG keys:
 
 ```
-gpg --gen-key   # choose DSA and Elgamal
+$ gpg --gen-key   # choose DSA and Elgamal
 
-emanuel@3laptop ~/ $ gpg --list-secret-keys
+$ gpg --list-secret-keys
 /home/emanuel/.gnupg/secring.gpg
 --------------------------------
 sec   2048D/E65FF517 2016-02-17
 uid                  Emanuel (This is a test key for an article) <calvo@pythian.com>
 ssb   2048g/5C1EA9AB 2016-02-17
 
-gpg --export E65FF517 > dummyKeys/public.key
-gpg --export-secret-keys E65FF517 > dummyKeys/private.key
+$ gpg --export E65FF517 > dummyKeys/public.key
+$ gpg --export-secret-keys E65FF517 > dummyKeys/private.key
 
 ```
 
@@ -142,9 +170,8 @@ CREATE TABLE keys (
 );
 ```
 
-Importing the local file into the RDS server. The next steps is done using the Large
-Object functions, which allow us to send a local file to the server using a simple
-`psql` command.
+Now we need to import the keys into the RDS server. For doing that we are going to
+use the psql-Large Object utility.
 
 ```
 dbtest=> \lo_import '/home/emanuel/dummyKeys/public.key' pubk
@@ -158,6 +185,7 @@ Now, let's insert those files directly into the `keys` table.
 INSERT INTO keys VALUES( pgp_key_id(lo_get(16438)) ,lo_get(16438), lo_get(16439));
 ```
 
+Both keys shuold return the same id from the `pgp_key_id` function.
 
 
 
