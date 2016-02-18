@@ -75,53 +75,57 @@ create table __person__pgp
 -- Test key ids
 SELECT pgp_key_id(pub) from keys;
 
+CREATE TABLE drugsList ( id serial PRIMARY KEY, drugName text);
+
+INSERT INTO drugsList(drugName) SELECT p.nameD FROM regexp_split_to_table(
+'Acetaminophen
+Adderall
+Alprazolam
+Amitriptyline
+Amlodipine
+Amoxicillin
+Ativan
+Atorvastatin
+Azithromycin
+Ciprofloxacin
+Citalopram
+Clindamycin
+Clonazepam
+Codeine
+Cyclobenzaprine
+Cymbalta
+Doxycycline
+Gabapentin
+Hydrochlorothiazide
+Ibuprofen
+Lexapro
+Lisinopril
+Loratadine
+Lorazepam
+Losartan
+Lyrica
+Meloxicam
+Metformin
+Metoprolol
+Naproxen
+Omeprazole
+Oxycodone
+Pantoprazole
+Prednisone
+Tramadol
+Trazodone
+Viagra
+Wellbutrin
+Xanax
+Zoloft', '\n') p(nameD);
+
 CREATE OR REPLACE FUNCTION get_drugs_random(int)
        RETURNS text[] AS
       $BODY$
-      SELECT array_agg(p.drug) FROM (
-        SELECT t.b FROM regexp_split_to_table(
-            'Acetaminophen
-      Adderall
-      Alprazolam
-      Amitriptyline
-      Amlodipine
-      Amoxicillin
-      Ativan
-      Atorvastatin
-      Azithromycin
-      Ciprofloxacin
-      Citalopram
-      Clindamycin
-      Clonazepam
-      Codeine
-      Cyclobenzaprine
-      Cymbalta
-      Doxycycline
-      Gabapentin
-      Hydrochlorothiazide
-      Ibuprofen
-      Lexapro
-      Lisinopril
-      Loratadine
-      Lorazepam
-      Losartan
-      Lyrica
-      Meloxicam
-      Metformin
-      Metoprolol
-      Naproxen
-      Omeprazole
-      Oxycodone
-      Pantoprazole
-      Prednisone
-      Tramadol
-      Trazodone
-      Viagra
-      Wellbutrin
-      Xanax
-      Zoloft', '\n') t(b)
-ORDER BY random() LIMIT $1
-) p(drug);
+      WITH rdrugs(dname) AS (
+        SELECT drugName FROM drugsList p ORDER BY random() LIMIT $1
+      )
+      SELECT array_agg(dname) FROM rdrugs ;
 $BODY$
 LANGUAGE 'sql' VOLATILE;
 
