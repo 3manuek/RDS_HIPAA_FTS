@@ -22,9 +22,6 @@ to `descriptions` or information stored on other rows such `drug` or `patology`.
 Not only that. You want to score the results because you care about who matches
 the best.
 
-> For good practices I'll be casting every data type, in order to speed up the
-> query parsing.
-
 Also, keep in mind that the current approach could have issues in a very heavy
 write environments, mainly derived from the logic held by the trigger function.
 
@@ -54,6 +51,16 @@ There are a couple of notes to do regarding what is implemented.
   want to have in critical environments.
 - HIPPA specifies that the encryption happens at communication layer. This is
   something I'll avoid in this article as RDS uses SSL by default.
+
+The trick over here is to store unencrypted part of the [SSN](https://en.wikipedia.org/wiki/Social_Security_number).
+4 digit isn't enough information for identifying purposes if stolen. Also, for searching
+you probably want a local full text search database to avoid dealing with the
+issues on searching over encrypted data.
+
+Although, if you are not interested to search through SSH, you can store few
+characters from the last name, making easier the indexing.
+
+
 
 
 ## Tools scope and RDS instance setup
@@ -160,7 +167,9 @@ $ gpg --export-secret-keys E65FF517 > dummyKeys/private.key
 
 In order to avoid to be redundant, please follow the steps of the [pgcrypto documentation](http://www.postgresql.org/docs/9.4/static/pgcrypto.html).
 
-Let's create the keys table:
+Let's create the keys table. This step is entirely a way to facilitate the process
+explained in the current article and is totally a non-recommendable production
+practice:
 
 ```
 CREATE TABLE keys (
@@ -170,8 +179,8 @@ CREATE TABLE keys (
 );
 ```
 
-Now we need to import the keys into the RDS server. For doing that we are going to
-use the psql-Large Object utility.
+Now, we need to import the keys into the RDS server. For doing that we are going to
+use the `psql-Large Object` utility.
 
 ```
 dbtest=> \lo_import '/home/emanuel/dummyKeys/public.key' pubk
@@ -179,24 +188,37 @@ lo_import 16438
 dbtest=> \lo_import '/home/emanuel/dummyKeys/private.key' privk
 lo_import 16439
 ```
-Now, let's insert those files directly into the `keys` table.
+
+
+Let's insert those files directly into the `keys` table, getting the key id using
+the `pgp_key_id` function provided by the pgcrypto extension.
 
 ```
 INSERT INTO keys VALUES( pgp_key_id(lo_get(16438)) ,lo_get(16438), lo_get(16439));
 ```
 
-Both keys shuold return the same id from the `pgp_key_id` function.
+NOTE 1:
+> Both keys should return the same id from the `pgp_key_id` function. If that's not
+> the case, you are dealing with keys that won't work together.
 
+NOTE 2:
+> The key used in the current example has an empty passphrase which is - you got it -
+> a security suicide. You won't use keys protected by a passphrase.
 
 
 ## Data definition
 
 As we are going to put all the encryption inside the function, I placed a mapping
-table that will receive columns as text, convert inside the trigger-returning function
-and insert the encrypted data only in the main table. If you look at the code bellow,
-you will see that both tables have both `bytea` and text data types.
+table that will receive columns as text type, convert inside the trigger-returning function
+and insert the encrypted data only in the destination table (`__person__` and `__person__PGP`).
+If you look at the code bellow, you will see that both tables have both `bytea` and text data types.
 
-> For simplicity reasons, I didn't include indexes or other indexable columns.
+We are going to use PGP encryption and raw encryption. The advantage of the PGP
+functions is that it allow us to use text as datatype, which save us some casting
+(and obviously adds another layer of security). Raw functions are discouraged to be
+used, however still an easy way to encrypt data using a simple passphrase and
+a selected encryption method.
+
 
 
 ```
@@ -469,3 +491,4 @@ Source for drugs list http://www.drugs.com/drug_information.html
 Source for diseases https://simple.wikipedia.org/wiki/List_of_diseases
 Getting started with GPG keys https://www.gnupg.org/gph/en/manual/c14.html
 AWS command line tool https://aws.amazon.com/cli/
+Discussion in the community mailing lis [here](http://postgresql.nabble.com/Fast-Search-on-Encrypted-Feild-td1863960.html)
