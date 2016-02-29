@@ -19,7 +19,7 @@ CREATE TABLE keys (
 
 
 -- INSERT INTO keys VALUES ('E65FF517', pg_read_binary_file('public.key'),pg_read_binary_file('private.key'));
-INSERT INTO keys ( pgp_key_id(lo_get(16430)) ,lo_get(16430), log_get(16437))
+INSERT INTO keys VALUES ( pgp_key_id(lo_get(16430)) ,lo_get(16430), lo_get(16437));
 
 -- Straigthforward to apply
 
@@ -77,6 +77,8 @@ create table __person__raw
 
 create table __person__map_raw (INHERITS __person__map);
 
+
+--
 create table __person__pgp
      (id serial PRIMARY KEY,
       keyid vachar(16) REFERENCES keys,
@@ -87,8 +89,9 @@ create table __person__pgp
       patology bytea
 );
 
-
 create table __person__map_pgp (INHERITS __person__map);
+--
+
 
 -- Test key ids
 SELECT pgp_key_id(pub) from keys;
@@ -108,6 +111,8 @@ Azithromycin
 Ciprofloxacin
 Citalopram
 Clindamycin
+CREATE INDEX fts_index ON local_search USING GIST(_FTS tsvector, id);
+
 Clonazepam
 Codeine
 Cyclobenzaprine

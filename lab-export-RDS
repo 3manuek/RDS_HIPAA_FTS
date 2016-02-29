@@ -9,6 +9,8 @@ psql -h dbtest1.chuxsnuhtvgl.us-east-1.rds.amazonaws.com -U dbtestuser dbtest
 that's all  you need :)
 
 
+SELECT 'foo'::regclass::oid;
+
 
 
 SELECT  (''::text::bytea) FROM generate_series(1,123);

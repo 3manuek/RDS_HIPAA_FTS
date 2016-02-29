@@ -6,6 +6,7 @@
 \setrandom tid 1 :ntellers
 \setrandom delta -5000 5000
 BEGIN;
+-- encrypt(tbalance::text::bytea, 'secret'::bytea,'aes'::text)
 UPDATE pgbench_accounts SET abalance = abalance + :delta WHERE aid = :aid;
 SELECT abalance FROM pgbench_accounts WHERE aid = :aid;
 UPDATE pgbench_tellers SET tbalance = tbalance + :delta WHERE tid = :tid;
