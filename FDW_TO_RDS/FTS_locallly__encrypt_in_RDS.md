@@ -1,28 +1,57 @@
-# FTS locally, encrypt remotely in RDS using official tools with PostgreSQL
+# FTS locally, encrypt remotely in [RDS](https://aws.amazon.com/rds/postgresql/) using official tools with PostgreSQL
+
+
+[HIPPA](https://en.wikipedia.org/wiki/Health_Insurance_Portability_and_Accountability_Act), [RDS](https://aws.amazon.com/rds/postgresql/) and FTS applied for searching on PostgreSQL
 
 I've been dealing with an issue that came into my desktop from people of the
 community, regarding RDS and HIPPA rules. There was a confusing scenario whether
-PostgreSQL was used with FTS and encryption on RDS. There are a lot of details
+PostgreSQL was using FTS and encryption on RDS. There are a lot of details
 regarding the architecture, however I think it won't be necessary to dig into
 very deeply to understand the basics of the present article moto.
 
-HIPPA rules are way complex. tl;dr, they tell us to store data encrypted on
-servers that are not in the premises. And that's the case of RDS. There is something
-that we need to understand regarding RDS: that magic comes with some caveats.
-AS you may know, encryption came at a cost, specially on CPU usage. vCPU sometimes
-does not have the expected performance, making it a valuable resource.
+[HIPPA](https://en.wikipedia.org/wiki/Health_Insurance_Portability_and_Accountability_Act)
+rules are complex and if you need to deal with them, you'll probably need to go
+through a careful read.
 
-Also, the solution wanted to use the FTS capabilities. FTS and ecnryption in the
-same tables, are not good friends. Both features consume resources and it's hard
-to combine both, specially when we start to find a way to build indexes over
-those columns.
+tl;dr, they tell us to store data encrypted on servers that are not in the premises.
+And that's the case of RDS. However, all the communications are encrypted using
+SSL protocol, but is not enough to complain with HIPPA rules.
 
-For this POC we are going to store FTS and keys locally, in a simple PostgreSQL
+CPU resources in RDS are expensive and not constant, which makes encryption and
+FTS features not very well suited for this kind of service. I not saying that you
+can't implement them, just keep in mind that a standard CPU against vCPU could
+have a lot difference. If you want to benchmark your local CPU against RDS vCPU,
+you can run from `psql` on both:
+
+```
+\o /dev/null
+\timing
+SELECT convert_from(
+          pgp_sym_decrypt_bytea(
+              pgp_sym_encrypt_bytea('Text to be encrypted using pgp_sym_decrypt_bytea' || gen_random_uuid()::text::bytea,'key', 'compress-algo=2'),
+          'key'),
+        'SQL-ASCII')
+FROM generate_series(1,10000);
+```
+
+There are a lot of things and functions you can combine from the pgcrypto package.
+I will try to post another blog post regarding this kind of benchmarks. In the
+meantime, this query should be enough to have a rough idea of the performance difference
+between RDS instance vCPU and premises server CPU.
+
+## Architecture basics
+
+For this POC we are going to store FTS and GPG keys locally, in a simple PostgreSQL
 instance and, using a trigger, encrypt and upload transparently to RDS using the
 standard FDW (Foreign Data Wrappers).
 
 Have in mind that RDS communication is already encrypted via SSL when data flows
-between server/client.
+between server/client. It's important to clarify this, to avoid confusions between
+communication encryption and storing data encrypted.
+
+The simple trigger will split the unencrypted data between a local table storing
+in a `tsvector` column (jsonb in the TODO), it will encrypt and push the encrypted
+data into RDS using FDW (the standard postgres_fdw package).
 
 ## RDS structure and mirrored local structure with FDW
 
