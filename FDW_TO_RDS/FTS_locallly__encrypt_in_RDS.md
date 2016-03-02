@@ -1,21 +1,21 @@
 # FTS locally, encrypt remotely in [RDS](https://aws.amazon.com/rds/postgresql/) using official tools with PostgreSQL
 
 
-[HIPPA](https://en.wikipedia.org/wiki/Health_Insurance_Portability_and_Accountability_Act), [RDS](https://aws.amazon.com/rds/postgresql/) and FTS applied for searching on PostgreSQL
+[HIPAA](https://en.wikipedia.org/wiki/Health_Insurance_Portability_and_Accountability_Act), [RDS](https://aws.amazon.com/rds/postgresql/) and FTS applied for searching on PostgreSQL
 
 I've been dealing with an issue that came into my desktop from people of the
-community, regarding RDS and HIPPA rules. There was a confusing scenario whether
+community, regarding RDS and HIPAA rules. There was a confusing scenario whether
 PostgreSQL was using FTS and encryption on RDS. There are a lot of details
 regarding the architecture, however I think it won't be necessary to dig into
 very deeply to understand the basics of the present article moto.
 
-[HIPPA](https://en.wikipedia.org/wiki/Health_Insurance_Portability_and_Accountability_Act)
+[HIPAA](https://en.wikipedia.org/wiki/Health_Insurance_Portability_and_Accountability_Act)
 rules are complex and if you need to deal with them, you'll probably need to go
 through a careful read.
 
 tl;dr, they tell us to store data encrypted on servers that are not in the premises.
 And that's the case of RDS. However, all the communications are encrypted using
-SSL protocol, but is not enough to complain with HIPPA rules.
+SSL protocol, but is not enough to complain with HIPAA rules.
 
 CPU resources in RDS are expensive and not constant, which makes encryption and
 FTS features not very well suited for this kind of service. I not saying that you
@@ -34,7 +34,7 @@ SELECT convert_from(
 FROM generate_series(1,10000);
 ```
 
-There are a lot of things and functions you can combine from the pgcrypto package.
+There are a lot of things and functions you can combine from the `pgcrypto` package.
 I will try to post another blog post regarding this kind of benchmarks. In the
 meantime, this query should be enough to have a rough idea of the performance difference
 between RDS instance vCPU and premises server CPU.
@@ -152,14 +152,17 @@ INSERT INTO keys VALUES ( pgp_key_id(lo_get(33583)) ,lo_get(33584), lo_get(33583
 
 ## Splitting data to FTS, encrypt and push into RDS
 
--- put the seq in RDS, not the node, so we can distribute the nodes
+-- put the seq in RDS, not the node, so we can distribute the nodes.
+-- probably a serial + nodename primary key will allow multi source
+   inserts. 
 -- BDR could be a good fit to use global sequences across master nodes.
 
 
 M <-> M  --- filter -----> RDS
 
 
-> pg_logical can be used instead FDW. 
+> pg_logical can be used instead FDW. pg_receivexlog could sit locally
+also.
 
 
 
@@ -210,15 +213,14 @@ BEGIN
 
     SELECT pub INTO secret FROM keys WHERE keyid = NEW.keyid;
 
-    RDS_MAP.fname := pgp_pub_encrypt(NEW.fname, secret);
-    -- Now we encrypt the rest of the columns
-    RDS_MAP.lname := pgp_pub_encrypt(NEW.lname, secret);
-    RDS_MAP.auth_drugs := pgp_pub_encrypt(NEW.auth_drugs::text, secret);
+    RDS_MAP.fname       := pgp_pub_encrypt(NEW.fname, secret);
+    RDS_MAP.lname       := pgp_pub_encrypt(NEW.lname, secret);
+    RDS_MAP.auth_drugs  := pgp_pub_encrypt(NEW.auth_drugs::text, secret);
     RDS_MAP.description := pgp_pub_encrypt(NEW.description, secret);
-    RDS_MAP.patology := pgp_pub_encrypt(NEW.patology, secret);
-    RDS_MAP.ssn := pgp_pub_encrypt(NEW.ssn::text, secret);
+    RDS_MAP.patology    := pgp_pub_encrypt(NEW.patology, secret);
+    RDS_MAP.ssn         := pgp_pub_encrypt(NEW.ssn::text, secret);
     RDS_MAP.partial_ssn := right( (NEW.ssn)::text,4);
-    RDS_MAP.id := nextval('global_seq'::regclass);
+    RDS_MAP.id          := nextval('global_seq'::regclass); -- should be removed.
 
     RDS_MAP.keyid := NEW.keyid;
 
