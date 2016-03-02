@@ -118,11 +118,14 @@ Same table. Everytime we want to deal with the RDS table, we are going to do so
 via the `__person__pgp_RDS` table, which is just a mapping table.
 
 
-## Setting the keys locally
+## Inserting keys locally
 
 - create the keys.
 
-use psql to insert the keys in db:
+
+
+We can insert they keys in several ways, but I found very convenient to use `psql`
+features to do so. Once the keys are in place you can use `\lo_import` command:
 
 ```
 postgres=# \lo_import /var/lib/postgresql/9.4/main/private.key
@@ -131,6 +134,11 @@ postgres=# \lo_import /var/lib/postgresql/9.4/main/public.key
 lo_import 33584
 ```
 
+The next steps are very straightforward. In a real scenario, you won't probably
+want to upload private keys into the table, just for practical purposes of this
+article I'm going to do so (only for decrypt data in the SELECT query).
+
+> `pgp_key_id` will return the same key no matter if you use private or public key.
 
 ```
 CREATE TABLE keys (
@@ -143,6 +151,17 @@ INSERT INTO keys VALUES ( pgp_key_id(lo_get(33583)) ,lo_get(33584), lo_get(33583
 ```
 
 ## Splitting data to FTS, encrypt and push into RDS
+
+-- put the seq in RDS, not the node, so we can distribute the nodes
+-- BDR could be a good fit to use global sequences across master nodes.
+
+
+M <-> M  --- filter -----> RDS
+
+
+> pg_logical can be used instead FDW. 
+
+
 
 ```
 CREATE SEQUENCE global_seq INCREMENT BY 1 MINVALUE 1 NO MAXVALUE;
