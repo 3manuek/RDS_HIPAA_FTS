@@ -1,27 +1,31 @@
-# FTS locally, encrypt remotely in [RDS](https://aws.amazon.com/rds/postgresql/) using official tools with PostgreSQL
+# Encrypting locally using pgcryto's PGP functions, FTS locally, multi source data injection in [Postgres RDS](https://aws.amazon.com/rds/postgresql/) using _just official tools_ for [HIPAA](https://en.wikipedia.org/wiki/Health_Insurance_Portability_and_Accountability_Act) complain
 
 
-[HIPAA](https://en.wikipedia.org/wiki/Health_Insurance_Portability_and_Accountability_Act), [RDS](https://aws.amazon.com/rds/postgresql/) and FTS applied for searching on PostgreSQL
+> Note 1:
+> All the of this presentation is published in this [repository](). You will find a lot of folders and information, probably part of a blog series. 
 
-I've been dealing with an issue that came into my desktop from people of the
-community, regarding RDS and HIPAA rules. There was a confusing scenario whether
-PostgreSQL was using FTS and encryption on RDS. There are a lot of details
-regarding the architecture, however I think it won't be necessary to dig into
+> Note 2:
+> All the work on this article is a **POC** (Proof of concept).
+
+I've been dealing with an issue that came into my desktop from people of the 
+community, regarding RDS and HIPAA rules. There was a confusing scenario whether 
+PostgreSQL was using FTS and encryption on RDS. There are a lot of details regarding 
+the architecture, however I think it won't be necessary to dig into
 very deeply to understand the basics of the present article moto.
 
 [HIPAA](https://en.wikipedia.org/wiki/Health_Insurance_Portability_and_Accountability_Act)
 rules are complex and if you need to deal with them, you'll probably need to go
 through a careful read.
 
-tl;dr, they tell us to store data encrypted on servers that are not in the premises.
+`tl;dr`? they tell us to store data encrypted on servers that are not in the premises.
 And that's the case of RDS. However, all the communications are encrypted using
 SSL protocol, but is not enough to complain with HIPAA rules.
 
-CPU resources in RDS are expensive and not constant, which makes encryption and
+CPU resources in RDS are expensive and not stable sometimes, which makes encryption and
 FTS features not very well suited for this kind of service. I not saying that you
 can't implement them, just keep in mind that a standard CPU against vCPU could
 have a lot difference. If you want to benchmark your local CPU against RDS vCPU,
-you can run from `psql` on both:
+you can run the following query inside `psql` on both instances:
 
 ```
 \o /dev/null
@@ -34,10 +38,11 @@ SELECT convert_from(
 FROM generate_series(1,10000);
 ```
 
-There are a lot of things and functions you can combine from the `pgcrypto` package.
+There are a lot of things and functions you can combine from the `pgcrypto` package
+(you will see that the repostory contemplates all of them).
 I will try to post another blog post regarding this kind of benchmarks. In the
 meantime, this query should be enough to have a rough idea of the performance difference
-between RDS instance vCPU and premises server CPU.
+between RDS instance vCPU and your server CPUs.
 
 ## Architecture basics
 
@@ -56,7 +61,7 @@ data into RDS using FDW (the standard postgres_fdw package).
 ## RDS structure and mirrored local structure with FDW
 
 
-RDS:
+RDS instance schema structure is very simple:
 
 ```
 CREATE SCHEMA enc_schema;
@@ -64,15 +69,17 @@ CREATE SCHEMA enc_schema;
 -- Encrpting locally, that's why we don't need to reference the key here.
 create table enc_schema.__person__pgp
      (
-      id bigint PRIMARY KEY,
+      id bigint,
+      source varchar(8),
       partial_ssn varchar(4), -- Non encrypted field for other fast search purposes
       ssn bytea,
-      keyid varchar(16), -- REFERENCES keys,
+      keyid varchar(16), 
       fname bytea,
       lname bytea,
       description bytea,
-      auth_drugs bytea, -- This is an encrypted text vector
-      patology bytea
+      auth_drugs bytea, 		-- This is an encrypted text vector
+      patology bytea,
+      PRIMARY KEY(id,source)
 );
 
 CREATE INDEX ON enc_schema.__person__pgp (partial_ssn);
@@ -82,11 +89,18 @@ We are not going to use the `partial SSN` column, but I found it very helpful to
 do RDS searches over encrypted data without fall into the need of decrypting in-the-fly.
 A 4-digit SSN does not provide useful information if stolen.
 
-Local:
+Also, the magic of the multi-source data injection comes from the compound key using a
+bigint and a source tag. 
+
+Basically, you can think on the local nodes as proxies. You can insert data on every node,
+but the data will point to the RDS instance.
+
+Local structure:
 
 ```
-CREATE DATABASE fts_proxy;
+CREATE DATABASE fts_proxy;  --  connect using \c fts_proxy on psql
 
+-- The sauce
 CREATE EXTENSION postgres_fdw;
 CREATE EXTENSION pgcrypto;
 
@@ -98,12 +112,13 @@ CREATE USER MAPPING FOR postgres
         SERVER RDS_server
         OPTIONS (user 'dbtestuser', password '<shadowed>');
 
-create foreign table __person__pgp_RDS
+CREATE FOREIGN TABLE __person__pgp_RDS
 (
        id bigint,
+       source varchar(8),
        partial_ssn varchar(4), -- Non encrypted field for other fast search purposes
        ssn bytea,
-       keyid varchar(16), -- REFERENCES keys,
+       keyid varchar(16), 
        fname bytea,
        lname bytea,
        description bytea,
@@ -114,15 +129,12 @@ SERVER RDS_server
 OPTIONS (schema_name 'enc_schema', table_name '__person__pgp');
 ```
 
-Same table. Everytime we want to deal with the RDS table, we are going to do so
-via the `__person__pgp_RDS` table, which is just a mapping table.
+Same table. Everytime we want to deal with the RDS table, we are going to do so using the `__person__pgp_RDS` table, which is just a mapping table. We can query this table as any other usual table.
 
 
 ## Inserting keys locally
 
-- create the keys.
-
-
+Just to avoid an extended article, I will skip the GPG key creation commands here. Please follow the instructions on the link at the referece section about keys.
 
 We can insert they keys in several ways, but I found very convenient to use `psql`
 features to do so. Once the keys are in place you can use `\lo_import` command:
@@ -152,34 +164,44 @@ INSERT INTO keys VALUES ( pgp_key_id(lo_get(33583)) ,lo_get(33584), lo_get(33583
 
 ## Splitting data to FTS, encrypt and push into RDS
 
--- put the seq in RDS, not the node, so we can distribute the nodes.
--- probably a serial + nodename primary key will allow multi source
-   inserts. 
--- BDR could be a good fit to use global sequences across master nodes.
+Now, here is when the tricky part starts. We are going to achieve some functionalities:
+
+- We are going to simulate _routing_ using inheritance on the FTS records. That will allow us to split data as we want and, replicate using Logical Decoding feature between the nodes. I won't include this on the current article just to avoid it to be extense. 
+- We are going to encrypt using the key that we select on the insert query. If you want a key _per table basis_, you will find easier to hardcode the key id on the `_func_get_FTS_encrypt_and_push_to_RDS`. 
+- Once the records are encrypted, the function will insert those records to the foreign table (RDS).
+- When querying the FTS table, we will be able to determine the source (something like the `routing` technique, you will find this familiar if you played with ElasticSearch). That allow us to make the FTS search transparent to the application, pointing always to the parent table. :dogewow:
+
+> Isn't Postgres cool? :o
 
 
-M <-> M  --- filter -----> RDS
-
-
-> pg_logical can be used instead FDW. pg_receivexlog could sit locally
-also.
-
+### FTS table structures
 
 
 ```
-CREATE SEQUENCE global_seq INCREMENT BY 1 MINVALUE 1 NO MAXVALUE;
-
+-- Parent table
 CREATE TABLE local_search (
   id bigint PRIMARY KEY,
   _FTS tsvector
 );
-
 CREATE INDEX fts_index ON local_search USING GIST(_FTS);
+
+-- Child table
+CREATE TABLE local_search_host1 () INHERITS (local_search);
+CREATE INDEX fts_index_host1 ON local_search_host1 USING GIST(_FTS);
+```
+Doing this, you avoid to have a column with a constant value in the table, consuming unnecessary space. You can have with this method, different names and tables accross the cluster, but always using the same query against `local_search`. You can map/reduce the data if you want to across the nodes, with the very same query.
+
+
+## Main code
+
+```
+CREATE SEQUENCE global_seq INCREMENT BY 1 MINVALUE 1 NO MAXVALUE;
 
 
 CREATE TABLE __person__pgp_map
      (
       keyid varchar(16),
+      source varchar(8),
       ssn bigint,
       fname text,
       lname text,
@@ -187,22 +209,6 @@ CREATE TABLE __person__pgp_map
       auth_drugs text[], -- This is an encrypted text vector
       patology text
     );
-
--- create table __person__map_pgp (INHERITS __person__map);
-
-CREATE TABLE __person__pgp
-     (
-      id bigint PRIMARY KEY,
-      partial_ssn varchar(4), -- Non encrypted field for other fast search purposes
-      ssn bytea,
-      keyid varchar(16), -- REFERENCES keys,
-      fname bytea,
-      lname bytea,
-      description bytea,
-      auth_drugs bytea, -- This is an encrypted text vector
-      patology bytea
-);
-
 
 CREATE OR REPLACE FUNCTION _func_get_FTS_encrypt_and_push_to_RDS() RETURNS "trigger" AS $$
 DECLARE
@@ -213,14 +219,17 @@ BEGIN
 
     SELECT pub INTO secret FROM keys WHERE keyid = NEW.keyid;
 
-    RDS_MAP.fname       := pgp_pub_encrypt(NEW.fname, secret);
-    RDS_MAP.lname       := pgp_pub_encrypt(NEW.lname, secret);
-    RDS_MAP.auth_drugs  := pgp_pub_encrypt(NEW.auth_drugs::text, secret);
+    RDS_MAP.source := NEW.source;
+    -- FTS_MAP.source := NEW.source;
+    RDS_MAP.fname := pgp_pub_encrypt(NEW.fname, secret);
+    -- Now we encrypt the rest of the columns
+    RDS_MAP.lname := pgp_pub_encrypt(NEW.lname, secret);
+    RDS_MAP.auth_drugs := pgp_pub_encrypt(NEW.auth_drugs::text, secret);
     RDS_MAP.description := pgp_pub_encrypt(NEW.description, secret);
-    RDS_MAP.patology    := pgp_pub_encrypt(NEW.patology, secret);
-    RDS_MAP.ssn         := pgp_pub_encrypt(NEW.ssn::text, secret);
+    RDS_MAP.patology := pgp_pub_encrypt(NEW.patology, secret);
+    RDS_MAP.ssn := pgp_pub_encrypt(NEW.ssn::text, secret);
     RDS_MAP.partial_ssn := right( (NEW.ssn)::text,4);
-    RDS_MAP.id          := nextval('global_seq'::regclass); -- should be removed.
+    RDS_MAP.id := nextval('global_seq'::regclass);
 
     RDS_MAP.keyid := NEW.keyid;
 
@@ -231,9 +240,10 @@ BEGIN
                    setweight(to_tsvector(NEW.auth_drugs::text), 'C') ||
                    setweight(to_tsvector(NEW.patology), 'D')
                     ) ;
-
-    INSERT INTO __person__pgp_rds SELECT (RDS_MAP.*);
-    INSERT INTO local_search SELECT (FTS_MAP.*);
+    -- Both tables contain same id,source
+    INSERT INTO __person__pgp_RDS SELECT (RDS_MAP.*);
+    EXECUTE 'INSERT INTO local_search_' || NEW.source || ' SELECT (' ||  quote_literal(FTS_MAP) || '::local_search).* ';
+    -- INSERT INTO local_search SELECT (FTS_MAP.*);
    RETURN NULL;
 END;
 $$
@@ -244,3 +254,213 @@ BEFORE INSERT ON __person__pgp_map
 FOR EACH ROW
 EXECUTE PROCEDURE _func_get_FTS_encrypt_and_push_to_RDS();
 ```
+
+This functions does everything. It inserts the data on RDS and split the data on the corresponding FTS child table. For performance purposes, I didn't want to catch exceptions at insert time (if the child table does not exists, i.e.), but you can also add this feature with an exception block as follows:
+
+```
+   BEGIN
+    EXECUTE 'INSERT INTO local_search_' || NEW.source || ' SELECT (' ||  quote_literal(FTS_MAP) || '::local_search).* ';
+   EXCEPTION WHEN undefined_table THEN
+     EXECUTE 'CREATE TABLE local_search_' || NEW.source || '() INHERITS local_search';
+   END;
+```
+
+The same can be done over the foreign table. More info in "Class HV — Foreign Data Wrapper Error (SQL/MED)" (HV00R -`fdw_table_not_found`).
+
+Check "Appendix A. PostgreSQL Error Codes" on the official manual for references about error codes.
+
+
+### Inserting data
+
+
+At insertion time, we are going to push data through a mapping table. The reason for this is that all the encrypted data is stored in `bytea` datatype, and we want to have clear queries instead.
+
+A random data query will look as:
+
+```
+INSERT INTO __person__pgp_map
+  SELECT
+      'host1',  -- source: host1
+                -- You can do this better by grabbing this data from a persistent
+                -- location
+      '76CDA76B5C1EA9AB',
+       round(random()*1000000000),
+      ('{Romulo,Ricardo,Romina,Fabricio,Francisca,Noa,Laura,Priscila,Tiziana,Ana,Horacio,Tim,Mario}'::text[])[round(random()*12+1)],
+      ('{Perez,Ortigoza,Tucci,Smith,Fernandez,Samuel,Veloso,Guevara,Calvo,Cantina,Casas,Korn,Rodriguez,Ike,Baldo,Vespi}'::text[])[round(random()*15+1)],
+      ('{some,random,text,goes,here}'::text[])[round(random()*5+1)] ,
+      get_drugs_random(round(random()*10)::int),
+      ('{Anotia,Appendicitis,Apraxia,Argyria,Arthritis,Asthma,Astigmatism,Atherosclerosis,Athetosis,Atrophy,Abscess,Influenza,Melanoma}'::text[])[round(random()*12+1)]
+      FROM generate_series(1,50) ;
+```
+
+Did you see the inner comment? Well, probably you want to split by `customer` or any other alias. I'm using this ugly harcoded text just to avoid a long article.
+
+Also, if you want to avoid harcoding as much as posible, you can consider to use a function that returns the host name or routing tag.
+
+
+### Querying the data
+
+We are almost done! Now we can do  some queries. Here are some examples:
+
+Limiting the matches:
+
+```
+# SELECT convert_from(pgp_pub_decrypt(ssn::text::bytea, ks.priv,''::text)::bytea,'SQL_ASCII'::name)
+# FROM __person__pgp_rds as rds JOIN
+#       keys ks USING (keyid)
+# WHERE rds.id IN (
+#                select id
+#                from local_search
+#                where to_tsquery('Asthma | Athetosis') @@ _fts LIMIT 5)
+#   AND rds.source = 'host1';
+
+ source | convert_from 
+--------+--------------
+ host1  | 563588056
+(1 row)               
+                
+```
+
+
+All the matches and double check from were the data came from:
+
+```
+# SELECT ls.tableoid::regclass, rds.source,
+#        convert_from(pgp_pub_decrypt(ssn::text::bytea, ks.priv,''::text)::bytea,'SQL_ASCII'::name)
+# FROM local_search ls JOIN
+#     __person__pgp_rds as rds USING (id),
+#     keys ks 
+# WHERE to_tsquery('Asthma | Athetosis') @@ ls._fts;
+
+     tableoid      | source | convert_from
+-------------------+--------+--------------
+local_search_host1 | host1  | 563588056
+(1 row)
+```
+
+And, we can't finish the article without showing how to use the ranking (did you see those setweight
+functions used in the function? You got it!):
+
+```
+#  SELECT rds.id,
+#  convert_from(pgp_pub_decrypt(fname::bytea, ks.priv,''::text)::bytea,'SQL_ASCII'::name),
+#  convert_from(pgp_pub_decrypt(lname::bytea, ks.priv,''::text)::bytea,'SQL_ASCII'::name),
+#  ts_rank( ls._FTS, query ) as rank
+#    FROM local_search ls JOIN
+#         __person__pgp_rds as rds ON (rds.id = ls.id AND rds.source = 'host1') JOIN
+#         keys ks USING (keyid),
+#         to_tsquery('Mario | Casas | (Casas:*A & Mario:*B) ') query
+#    WHERE
+#        ls._FTS  @@ query
+#    ORDER BY rank DESC;
+
+ id | convert_from | convert_from |   rank   
+----+--------------+--------------+----------
+ 43 | Mario        | Casas        | 0.425549
+ 61 | Ana          | Casas        | 0.303964
+ 66 | Horacio      | Casas        | 0.303964
+(3 rows)
+```
+
+Remember, think that this query is doing FTS, decryption and ranking in just one query, over a local and
+a remote server. You can't say that PostgreSQL isn't hipster enough!
+
+**
+ATTACH EXPLAINS
+**
+
+
+### Json/jsonb datatype is here to help
+
+You can collapse all the data and use `json` datatype on the mapping and foreign table, allowing you to avoid the pain of pointing and decrypting data per column basis.
+
+Put all the encrypted columns in a `bytea` column on RDS. The mapping table will look as follows:
+
+```
+CREATE TABLE __person__pgp_map
+     (
+      keyid varchar(16),
+      source varchar(8),
+      ssn bigint,
+      data jsonb
+    );
+```
+
+At insert time, just use a json column instead per column basis. Keep in mind that you will need to deal within the json contents. I found using this easier for insert, but the FTS needs some clean up to avoid insert column names in the `_fts` field at `local_search` tables.
+
+
+## Additional functions used here
+
+In the insert statement above, you will see a user defined function that gets a random length vector of drugs. It is implemented using the following code:
+
+
+```
+CREATE TABLE drugsList ( id serial PRIMARY KEY, drugName text);
+
+INSERT INTO drugsList(drugName) SELECT p.nameD FROM regexp_split_to_table(
+'Acetaminophen
+Adderall
+Alprazolam
+Amitriptyline
+Amlodipine
+Amoxicillin
+Ativan
+Atorvastatin
+Azithromycin
+Ciprofloxacin
+Citalopram
+Clindamycin
+Clonazepam
+Codeine
+Cyclobenzaprine
+Cymbalta
+Doxycycline
+Gabapentin
+Hydrochlorothiazide
+Ibuprofen
+Lexapro
+Lisinopril
+Loratadine
+Lorazepam
+Losartan
+Lyrica
+Meloxicam
+Metformin
+Metoprolol
+Naproxen
+Omeprazole
+Oxycodone
+Pantoprazole
+Prednisone
+Tramadol
+Trazodone
+Viagra
+Wellbutrin
+Xanax
+Zoloft', '\n') p(nameD);
+
+CREATE OR REPLACE FUNCTION get_drugs_random(int)
+       RETURNS text[] AS
+      $BODY$
+      WITH rdrugs(dname) AS (
+        SELECT drugName FROM drugsList p ORDER BY random() LIMIT $1
+      )
+      SELECT array_agg(dname) FROM rdrugs ;
+$BODY$
+LANGUAGE 'sql' VOLATILE;
+```
+
+
+## References
+
+A very awesome tutorial about FTS for PostgreSQL can be found [here](http://www.sai.msu.su/~megera/postgres/fts/doc/appendixes.html).
+
+[Source for drugs list](http://www.drugs.com/drug_information.html)
+
+[Source for diseases](https://simple.wikipedia.org/wiki/List_of_diseases)
+
+[Getting started with GPG keys](https://www.gnupg.org/gph/en/manual/c14.html)
+
+[AWS command line tool](https://aws.amazon.com/cli/)
+
+Discussion in the community mailing lis [here](http://postgresql.nabble.com/Fast-Search-on-Encrypted-Feild-td1863960.html)

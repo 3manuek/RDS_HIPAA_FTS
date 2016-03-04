@@ -31,9 +31,9 @@ OPTIONS (schema_name 'enc_schema', table_name '__person__pgp')
 
 
 
-emanuel@3laptop ~/git/RDS_HIPPA_FTS $ sudo cp /home/emanuel/imedicare/data/private.key /var/lib/postgresql/9.4/main/
+emanuel@3laptop ~/git/RDS_HIPPA_FTS $ sudo cp /home/emanuel/keyfolder/data/private.key /var/lib/postgresql/9.4/main/
 emanuel@3laptop ~/git/RDS_HIPPA_FTS $ sudo chown postgres: /var/lib/postgresql/9.4/main/private.key
-emanuel@3laptop ~/git/RDS_HIPPA_FTS $ sudo cp /home/emanuel/imedicare/data/public.key /var/lib/postgresql/9.4/main/
+emanuel@3laptop ~/git/RDS_HIPPA_FTS $ sudo cp /home/emanuel/keyfolder/data/public.key /var/lib/postgresql/9.4/main/
 emanuel@3laptop ~/git/RDS_HIPPA_FTS $ sudo chown postgres: /var/lib/postgresql/9.4/main/public.key
 
 
