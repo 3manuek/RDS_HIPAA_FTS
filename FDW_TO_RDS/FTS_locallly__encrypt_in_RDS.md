@@ -1,4 +1,4 @@
-# Local encryption with pgcryto's PGP functions and FTS support from multi source nodes in [Postgres RDS](https://aws.amazon.com/rds/postgresql/) using _just official tools_ for [HIPAA](https://en.wikipedia.org/wiki/Health_Insurance_Portability_and_Accountability_Act) complain
+# Multi source data injection to [Postgres RDS](https://aws.amazon.com/rds/postgresql/) with encryption and FTS support
 
 
 > Note 1:
@@ -6,6 +6,9 @@
 
 > Note 2:
 > All the work on this article is a **POC** (Proof of concept).
+
+> Note 3:
+> This is something that is related for [HIPAA](https://en.wikipedia.org/wiki/Health_Insurance_Portability_and_Accountability_Act) compliant.
 
 I've been dealing with an issue that came into my desktop from people of the 
 community, regarding RDS and HIPAA rules. There was a confusing scenario whether 
@@ -19,7 +22,7 @@ through a careful read.
 
 `tl;dr`? they tell us to store data encrypted on servers that are not in the premises.
 And that's the case of RDS. However, all the communications are encrypted using
-SSL protocol, but is not enough to complain with HIPAA rules.
+SSL protocol, but is not enough to compliant with HIPAA rules.
 
 CPU resources in RDS are expensive and not stable sometimes, which makes encryption and
 FTS features not very well suited for this kind of service. I not saying that you
@@ -57,6 +60,13 @@ communication encryption and storing data encrypted.
 The simple trigger will split the unencrypted data between a local table storing
 in a `tsvector` column (jsonb in the TODO), it will encrypt and push the encrypted
 data into RDS using FDW (the standard postgres_fdw package).
+
+A simple flight view of the idea can be observed in the image bellow.
+
+![alt text](/Users/emanuel/git/RDS_HIPPA_FTS/FDW_TO_RDS/images/image1.png "Image 1")
+
+Source: https://www.lucidchart.com/documents/edit/c22ce7a1-c09d-4ca8-922d-dcb123d577a5?driveId=0AHk8my7IafcZUk9PVA#
+
 
 ## RDS structure and mirrored local structure with FDW
 
@@ -195,6 +205,8 @@ CREATE TABLE local_search_host1 () INHERITS (local_search);
 CREATE INDEX fts_index_host1 ON local_search_host1 USING GIST(_FTS);
 ```
 Doing this, you avoid to have a column with a constant value in the table, consuming unnecessary space. You can have with this method, different names and tables accross the cluster, but always using the same query against `local_search`. You can map/reduce the data if you want to across the nodes, with the very same query.
+
+Is not necessary to only have 1 source or route per node. The only requirement for this is to have different routes per node (combining source and route could increase complexity, however is possible).
 
 
 ## Main code
