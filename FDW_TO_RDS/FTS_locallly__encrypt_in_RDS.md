@@ -63,7 +63,8 @@ data into RDS using FDW (the standard postgres_fdw package).
 
 A simple flight view of the idea can be observed in the image bellow.
 
-![alt text](/Users/emanuel/git/RDS_HIPPA_FTS/FDW_TO_RDS/images/image1.png "Image 1")
+[//]: (/Users/emanuel/git/RDS_HIPPA_FTS/FDW_TO_RDS/images/image1.png if using local file)
+![alt text](https://raw.githubusercontent.com/3manuek/RDS_HIPAA_FTS/master/FDW_TO_RDS/images/image1.png "Image 1")
 
 Source: https://www.lucidchart.com/documents/edit/c22ce7a1-c09d-4ca8-922d-dcb123d577a5?driveId=0AHk8my7IafcZUk9PVA#
 
