@@ -1,4 +1,4 @@
-# Encrypting locally using pgcryto's PGP functions, FTS locally, multi source data injection in [Postgres RDS](https://aws.amazon.com/rds/postgresql/) using _just official tools_ for [HIPAA](https://en.wikipedia.org/wiki/Health_Insurance_Portability_and_Accountability_Act) complain
+# Local encryption with pgcryto's PGP functions and FTS support from multi source nodes in [Postgres RDS](https://aws.amazon.com/rds/postgresql/) using _just official tools_ for [HIPAA](https://en.wikipedia.org/wiki/Health_Insurance_Portability_and_Accountability_Act) complain
 
 
 > Note 1:
@@ -95,7 +95,11 @@ bigint and a source tag.
 Basically, you can think on the local nodes as proxies. You can insert data on every node,
 but the data will point to the RDS instance.
 
-Local structure:
+If you are planning to manage large amounts of data, you can partition the table on RDS,
+allowing a better organization for data management.
+
+
+Local nodes structure:
 
 ```
 CREATE DATABASE fts_proxy;  --  connect using \c fts_proxy on psql
@@ -185,7 +189,8 @@ CREATE TABLE local_search (
 );
 CREATE INDEX fts_index ON local_search USING GIST(_FTS);
 
--- Child table
+-- Child table, suffix local_search_<source>
+
 CREATE TABLE local_search_host1 () INHERITS (local_search);
 CREATE INDEX fts_index_host1 ON local_search_host1 USING GIST(_FTS);
 ```
@@ -220,9 +225,7 @@ BEGIN
     SELECT pub INTO secret FROM keys WHERE keyid = NEW.keyid;
 
     RDS_MAP.source := NEW.source;
-    -- FTS_MAP.source := NEW.source;
     RDS_MAP.fname := pgp_pub_encrypt(NEW.fname, secret);
-    -- Now we encrypt the rest of the columns
     RDS_MAP.lname := pgp_pub_encrypt(NEW.lname, secret);
     RDS_MAP.auth_drugs := pgp_pub_encrypt(NEW.auth_drugs::text, secret);
     RDS_MAP.description := pgp_pub_encrypt(NEW.description, secret);
@@ -240,10 +243,10 @@ BEGIN
                    setweight(to_tsvector(NEW.auth_drugs::text), 'C') ||
                    setweight(to_tsvector(NEW.patology), 'D')
                     ) ;
+
     -- Both tables contain same id,source
     INSERT INTO __person__pgp_RDS SELECT (RDS_MAP.*);
     EXECUTE 'INSERT INTO local_search_' || NEW.source || ' SELECT (' ||  quote_literal(FTS_MAP) || '::local_search).* ';
-    -- INSERT INTO local_search SELECT (FTS_MAP.*);
    RETURN NULL;
 END;
 $$
@@ -368,6 +371,9 @@ a remote server. You can't say that PostgreSQL isn't hipster enough!
 **
 ATTACH EXPLAINS
 **
+
+### Updating data
+
 
 
 ### Json/jsonb datatype is here to help
