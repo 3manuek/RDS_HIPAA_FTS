@@ -139,7 +139,9 @@ CREATE SEQUENCE global_seq INCREMENT BY 1 MINVALUE 1 NO MAXVALUE;
 ---
 
 CREATE TABLE local_search (
-  id bigint PRIMARY KEY,
+  id bigint,
+  source vachar(8),
+  PRIMARY KEY (id, source),
   _FTS tsvector
 );
 
@@ -148,7 +150,7 @@ CREATE INDEX fts_index ON local_search USING GIST(_FTS);
 -- Having this, you avoid to have a column with a constant value in the table,
 -- consuming unnecessary space. You can have with this method, different names
 -- and tables accross the cluster, but always using the same query against `local_search`
-CREATE TABLE local_search_host1 () INHERITS (local_search);
+CREATE TABLE local_search_host1 ( CHECK (source = 'host1') ) INHERITS (local_search);
 CREATE INDEX fts_index_host1 ON local_search_host1 USING GIST(_FTS);
 
 -- A better idea could be simulating routing as Elastic Search. That is, the
@@ -261,7 +263,7 @@ FROM __person__pgp_rds as rds JOIN
 WHERE rds.id IN (
                 select id
                 from local_search
-                where to_tsquery('Asthma | Athetosis') @@ _fts LIMIT 5);
+                where to_tsquery('Asthma | Athetosis') @@ _fts AND source = "host1" LIMIT 5);
 
 
 SELECT rds.source, convert_from(pgp_pub_decrypt(ssn::text::bytea, ks.priv,''::text)::bytea,'SQL_ASCII'::name)
@@ -270,7 +272,7 @@ FROM __person__pgp_rds as rds JOIN
 WHERE rds.id IN (
                 select id
                 from local_search
-                where to_tsquery('Asthma | Athetosis') @@ _fts LIMIT 5)
+                where to_tsquery('Asthma | Athetosis') @@ _fts LIMIT 5) and source = "host1"
   AND rds.source = 'host1';
 
 
@@ -280,7 +282,7 @@ SELECT ls.tableoid::regclass, rds.source,
 FROM local_search ls JOIN
      __person__pgp_rds as rds USING (id),
      keys ks
-WHERE to_tsquery('Asthma | Athetosis') @@ ls._fts;
+WHERE to_tsquery('Asthma | Athetosis') @@ ls._fts ls.source = "host1";
 
 -- tableoid      | source | convert_from
 --------------------+--------+--------------

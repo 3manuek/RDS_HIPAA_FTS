@@ -109,6 +109,8 @@ but the data will point to the RDS instance.
 If you are planning to manage large amounts of data, you can partition the table on RDS,
 allowing a better organization for data management.
 
+You will see no indexes over encrypted data
+
 
 Local nodes structure:
 
