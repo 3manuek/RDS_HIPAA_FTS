@@ -15,6 +15,24 @@ CREATE USER MAPPING FOR postgres
         SERVER RDS_server
         OPTIONS (user 'dbtestuser', password '<shadowed>');
 
+CREATE FOREIGN table __person__pgp_RDS_URE
+(
+       id bigint,
+       source varchar(8),
+       partial_ssn varchar(4), -- Non encrypted field for other fast search purposes
+       ssn bytea,
+       keyid varchar(16), -- REFERENCES keys,
+       fname bytea,
+       lname bytea,
+       description bytea,
+       auth_drugs bytea, -- This is an encrypted text vector
+       patology bytea
+)
+SERVER RDS_server
+OPTIONS (schema_name 'enc_schema', table_name '__person__pgp', use_remote_estimate 'true')
+;
+
+
 CREATE FOREIGN table __person__pgp_RDS
 (
        id bigint,
@@ -122,7 +140,7 @@ Zoloft', '\n') p(nameD);
 
 CREATE OR REPLACE FUNCTION get_drugs_random(int)
        RETURNS text[] AS
-      $BODY$
+$BODY$
       WITH rdrugs(dname) AS (
         SELECT drugName FROM drugsList p ORDER BY random() LIMIT $1
       )
@@ -140,7 +158,7 @@ CREATE SEQUENCE global_seq INCREMENT BY 1 MINVALUE 1 NO MAXVALUE;
 
 CREATE TABLE local_search (
   id bigint,
-  source vachar(8),
+  source varchar(8),
   PRIMARY KEY (id, source),
   _FTS tsvector
 );
@@ -157,9 +175,6 @@ CREATE INDEX fts_index_host1 ON local_search_host1 USING GIST(_FTS);
 -- child table can hold one of the filters as the table name. For searching, you
 -- will always point to the parent table, allowing you to go through to split
 -- data locally for targeted search OR full search.
-
-CREATE TABLE local_search_host1 (INHERITS local_search);
-CREATE INDEX fts_index_host1 ON local_search_host1 USING GIST(_FTS);
 
 -- Example:
 -- fts_proxy=# select id from local_search where to_tsquery('Asthma | Athetosis') @@ _fts;
@@ -219,6 +234,7 @@ BEGIN
     RDS_MAP.keyid := NEW.keyid;
 
     FTS_MAP.id   := RDS_MAP.id;
+    FTS_MAP.source := NEW.source;
     FTS_MAP._FTS := (setweight(to_tsvector(NEW.fname) , 'B' ) ||
                    setweight(to_tsvector(NEW.lname), 'A') ||
                    setweight(to_tsvector(NEW.description), 'C') ||
@@ -305,4 +321,50 @@ WHERE to_tsquery('Asthma | Athetosis') @@ ls._fts ls.source = "host1";
     ORDER BY rank DESC;
 
 
-convert_from(pgp_pub_decrypt(ssn::text::bytea, ks.priv,''::text)::bytea,'SQL_ASCII'::name)
+-- convert_from(pgp_pub_decrypt(ssn::text::bytea, ks.priv,''::text)::bytea,'SQL_ASCII'::name)
+
+
+EXPLAIN (BUFFERS,ANALYZE,VERBOSE) SELECT rds.id,
+  convert_from(pgp_pub_decrypt(fname::bytea, ks.priv,''::text)::bytea,'SQL_ASCII'::name),
+  convert_from(pgp_pub_decrypt(lname::bytea, ks.priv,''::text)::bytea,'SQL_ASCII'::name),
+  ts_rank( ls._FTS, query ) as rank
+    FROM local_search ls JOIN
+         __person__pgp_rds as rds ON (rds.id = ls.id AND rds.source = 'host1') JOIN
+         keys ks USING (keyid),
+         to_tsquery('Mario | Casas | (Casas:*A & Mario:*B) ') query
+    WHERE
+        ls._FTS  @@ query
+    ORDER BY rank DESC;
+
+
+    EXPLAIN ANALYZE SELECT rds.id,
+      convert_from(pgp_pub_decrypt(fname::bytea, ks.priv,''::text)::bytea,'SQL_ASCII'::name),
+      convert_from(pgp_pub_decrypt(lname::bytea, ks.priv,''::text)::bytea,'SQL_ASCII'::name),
+      ts_rank( ls._FTS, query ) as rank
+        FROM local_search ls,  __person__pgp_rds_URE  rds  JOIN
+             keys ks USING (keyid),
+             to_tsquery('Mario | Casas | (Casas:*A & Mario:*B) ') query
+        WHERE
+            rds.id = ls.id
+              AND rds.source = 'host1'
+            AND
+            ls._FTS  @@ query
+        ORDER BY rank DESC;
+
+
+        explain (ANALYZE, buffers, verbose) SELECT rds.id,
+              convert_from(pgp_pub_decrypt(fname::bytea, ks.priv,''::text)::bytea,'SQL_ASCII'::name),
+              convert_from(pgp_pub_decrypt(lname::bytea, ks.priv,''::text)::bytea,'SQL_ASCII'::name),
+              ts_rank( ls._FTS, query ) as rank
+                FROM local_search ls,
+                     LATERAL (SELECT * FROM __person__pgp_rds WHERE source = 'host1' AND id = ls.id )   rds  JOIN
+                     keys ks USING (keyid),
+                     to_tsquery('Mario | Casas | (Casas:*A & Mario:*B) ') query
+                WHERE
+                    -- (rds.source = 'host1' AND rds.id = ls.id)
+                    -- AND
+                    ls._FTS  @@ query
+                ORDER BY rank DESC;
+
+
+              

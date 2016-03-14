@@ -2,7 +2,7 @@
 
 
 > Note 1:
-> All the of this presentation is published in this [repository](). You will find a lot of folders and information, probably part of a blog series. 
+> All the of this presentation is published in this [repository](). You will find a lot of folders and information, probably part of a blog series.
 
 > Note 2:
 > All the work on this article is a **POC** (Proof of concept).
@@ -10,9 +10,9 @@
 > Note 3:
 > This is something that is related for [HIPAA](https://en.wikipedia.org/wiki/Health_Insurance_Portability_and_Accountability_Act) compliant.
 
-I've been dealing with an issue that came into my desktop from people of the 
-community, regarding RDS and HIPAA rules. There was a confusing scenario whether 
-PostgreSQL was using FTS and encryption on RDS. There are a lot of details regarding 
+I've been dealing with an issue that came into my desktop from people of the
+community, regarding RDS and HIPAA rules. There was a confusing scenario whether
+PostgreSQL was using FTS and encryption on RDS. There are a lot of details regarding
 the architecture, however I think it won't be necessary to dig into
 very deeply to understand the basics of the present article moto.
 
@@ -72,10 +72,13 @@ Source: https://www.lucidchart.com/documents/edit/c22ce7a1-c09d-4ca8-922d-dcb123
 ## RDS structure and mirrored local structure with FDW
 
 
-RDS instance schema structure is very simple:
+RDS instance schema structure contains a parent table , a partitioning trigger  and
+its trigger:
 
 ```
 CREATE SCHEMA enc_schema;
+
+SET search_path TO enc_schema;
 
 -- Encrpting locally, that's why we don't need to reference the key here.
 create table enc_schema.__person__pgp
@@ -84,7 +87,7 @@ create table enc_schema.__person__pgp
       source varchar(8),
       partial_ssn varchar(4), -- Non encrypted field for other fast search purposes
       ssn bytea,
-      keyid varchar(16), 
+      keyid varchar(16),
       fname bytea,
       lname bytea,
       description bytea,
@@ -94,14 +97,46 @@ create table enc_schema.__person__pgp
 );
 
 CREATE INDEX ON enc_schema.__person__pgp (partial_ssn);
+
+
+CREATE OR REPLACE FUNCTION basic_ins_trig() RETURNS trigger LANGUAGE plpgsql AS $basic_ins_trig$
+DECLARE
+  compTable text :=  TG_RELID::regclass::text ;
+  childTable text := compTable || '_' || NEW.source ;
+  statement text :=  'INSERT INTO ' || childTable || ' SELECT (' || QUOTE_LITERAL(NEW) || '::'  || compTable ||  ').*' ;
+  createStmt text := 'CREATE TABLE ' || childTable  ||
+    '(CHECK (source =' || quote_literal(NEW.source) || ')) INHERITS (' || compTable || ')';
+  indexAdd1 text := 'CREATE INDEX ON ' || childTable || '(source,id)' ;
+  indexAdd2 text := 'CREATE INDEX ON ' || childTable || '(source,ssn)' ;
+BEGIN
+  BEGIN
+    EXECUTE statement;
+  EXCEPTION
+    WHEN undefined_table THEN
+      EXECUTE createStmt;
+      EXECUTE indexAdd1;
+      EXECUTE indexAdd2;
+      EXECUTE statement;
+  END;
+  RETURN NULL;
+
+END;
+
+$basic_ins_trig$;
+
+
+CREATE TRIGGER part_person_pgp BEFORE INSERT ON __person__pgp
+FOR EACH ROW EXECUTE PROCEDURE basic_ins_trig() ;
+
+
 ```
 
-We are not going to use the `partial SSN` column, but I found it very helpful to
-do RDS searches over encrypted data without fall into the need of decrypting in-the-fly.
-A 4-digit SSN does not provide useful information if stolen.
+We are not going to use the `partial SSN` column in the examples, but I found it very helpful to
+do RDS searches over encrypted data without fall into the need of decrypting in-the-fly the SSN.
+The last SSN's 4-digits do not provide useful information if stolen.
 
 Also, the magic of the multi-source data injection comes from the compound key using a
-bigint and a source tag. 
+bigint and a source tag.
 
 Basically, you can think on the local nodes as proxies. You can insert data on every node,
 but the data will point to the RDS instance.
@@ -135,7 +170,7 @@ CREATE FOREIGN TABLE __person__pgp_RDS
        source varchar(8),
        partial_ssn varchar(4), -- Non encrypted field for other fast search purposes
        ssn bytea,
-       keyid varchar(16), 
+       keyid varchar(16),
        fname bytea,
        lname bytea,
        description bytea,
@@ -147,6 +182,10 @@ OPTIONS (schema_name 'enc_schema', table_name '__person__pgp');
 ```
 
 Same table. Everytime we want to deal with the RDS table, we are going to do so using the `__person__pgp_RDS` table, which is just a mapping table. We can query this table as any other usual table.
+
+For testing purposes, I also created a table with the same structure as the above with
+`__person_rds_RDS_URE` table name and added the `use_remote_estimate 'true'` option.
+When enabled, postgres_fdw obtains the row count and estimates from the remote server.
 
 
 ## Inserting keys locally
@@ -183,8 +222,8 @@ INSERT INTO keys VALUES ( pgp_key_id(lo_get(33583)) ,lo_get(33584), lo_get(33583
 
 Now, here is when the tricky part starts. We are going to achieve some functionalities:
 
-- We are going to simulate _routing_ using inheritance on the FTS records. That will allow us to split data as we want and, replicate using Logical Decoding feature between the nodes. I won't include this on the current article just to avoid it to be extense. 
-- We are going to encrypt using the key that we select on the insert query. If you want a key _per table basis_, you will find easier to hardcode the key id on the `_func_get_FTS_encrypt_and_push_to_RDS`. 
+- We are going to simulate _routing_ using inheritance on the FTS records. That will allow us to split data as we want and, replicate using Logical Decoding feature between the nodes. I won't include this on the current article just to avoid it to be extense.
+- We are going to encrypt using the key that we select on the insert query. If you want a key _per table basis_, you will find easier to hardcode the key id on the `_func_get_FTS_encrypt_and_push_to_RDS`.
 - Once the records are encrypted, the function will insert those records to the foreign table (RDS).
 - When querying the FTS table, we will be able to determine the source (something like the `routing` technique, you will find this familiar if you played with ElasticSearch). That allow us to make the FTS search transparent to the application, pointing always to the parent table. :dogewow:
 
@@ -332,11 +371,11 @@ Limiting the matches:
 #                where to_tsquery('Asthma | Athetosis') @@ _fts LIMIT 5)
 #   AND rds.source = 'host1';
 
- source | convert_from 
+ source | convert_from
 --------+--------------
  host1  | 563588056
 (1 row)               
-                
+
 ```
 
 
@@ -347,7 +386,7 @@ All the matches and double check from were the data came from:
 #        convert_from(pgp_pub_decrypt(ssn::text::bytea, ks.priv,''::text)::bytea,'SQL_ASCII'::name)
 # FROM local_search ls JOIN
 #     __person__pgp_rds as rds USING (id),
-#     keys ks 
+#     keys ks
 # WHERE to_tsquery('Asthma | Athetosis') @@ ls._fts;
 
      tableoid      | source | convert_from
@@ -383,12 +422,123 @@ functions used in the function? You got it!):
 Remember, think that this query is doing FTS, decryption and ranking in just one query, over a local and
 a remote server. You can't say that PostgreSQL isn't hipster enough!
 
-**
-ATTACH EXPLAINS
-**
 
-### Updating data
+I can't continue the article without showing the query plan executed by the local host (using buffers,
+  analyze and verbose options).
 
+
+
+```
+EXPLAIN (buffers,verbose,analyze) SELECT rds.id,
+ convert_from(pgp_pub_decrypt(fname::bytea, ks.priv,''::text)::bytea,'SQL_ASCII'::name),
+ convert_from(pgp_pub_decrypt(lname::bytea, ks.priv,''::text)::bytea,'SQL_ASCII'::name),
+ ts_rank( ls._FTS, query ) as rank
+   FROM local_search ls JOIN
+        __person__pgp_rds as rds ON (rds.id = ls.id AND rds.source = 'host1') JOIN
+        keys ks USING (keyid),
+        to_tsquery('Mario | Casas | (Casas:*A & Mario:*B) ') query
+   WHERE
+       ls._FTS  @@ query
+   ORDER BY rank DESC;
+
+
+....
+               ->  Materialize  (cost=100.00..117.09 rows=3 width=122) (actual time=62.946..62.971 rows=50 loops=9)
+                     Output: rds.id, rds.fname, rds.lname, rds.keyid
+                     ->  Foreign Scan on public.__person__pgp_rds rds  (cost=100.00..117.07 rows=3 width=122) (actual time=566.495..566.520 rows=50 loops=1)
+                           Output: rds.id, rds.fname, rds.lname, rds.keyid
+                           Remote SQL: SELECT id, keyid, fname, lname FROM enc_schema.__person__pgp WHERE ((source = 'host1'::text))
+...
+ Planning time: 4.931 ms
+ Execution time: 2115.919 ms
+(45 rows)
+
+```
+
+From the above _Query Plan_ extract, we can see that the partitioning at RDS is transparent for the query.
+The execution node in charge of extracting data from the RDS is the _Foreign Scan_, which also
+provides the query executed remotely.
+
+Wait a minute. Looks like the remote SQL is somehow dangerous to execute. It is not using the
+_id_! There is a reason for that, and its related on how postgres gather the foreign table statistics.
+If I use the _remote estimations_ we can see how the remote SQL changes in the Query Plan:
+
+```
+ EXPLAIN (ANALYZE, VERBOSE, BUFFERS) SELECT rds.id,
+      convert_from(pgp_pub_decrypt(fname::bytea, ks.priv,''::text)::bytea,'SQL_ASCII'::name),
+      convert_from(pgp_pub_decrypt(lname::bytea, ks.priv,''::text)::bytea,'SQL_ASCII'::name),
+      ts_rank( ls._FTS, query ) as rank
+        FROM local_search ls,  __person__pgp_rds_URE  rds  JOIN
+             keys ks USING (keyid),
+             to_tsquery('Mario | Casas | (Casas:*A & Mario:*B) ') query
+        WHERE                                                      
+            rds.id = ls.id
+              AND rds.source = 'host1'
+            AND
+            ls._FTS  @@ query
+        ORDER BY rank DESC;
+```
+
+Query Plan (Foreign Scan execution node):
+
+```
+...
+->  Foreign Scan on public.__person__pgp_rds_ure rds  (cost=100.01..108.21 rows=2 width=1018) (actual time=250.334..250.336 rows=1 loops=31)
+      Output: rds.id, rds.source, rds.partial_ssn, rds.ssn, rds.keyid, rds.fname, rds.lname, rds.description, rds.auth_drugs, rds.patology
+      Remote SQL: SELECT id, keyid, fname, lname FROM enc_schema.__person__pgp WHERE ((source = 'host1'::text)) AND (($1::bigint = id))
+...
+```
+
+Foreign tables also need the local statistics to be updated. In the next examples
+there are 3 queries: using the `use_remote_estimate`, without previous ANALYZE and
+without `use_remote_estimate` and a query using the local estimations (`__person_pgp_rds`)
+after issuing ANALYZE and without _URE_.
+
+
+```
+fts_proxy=# \o /dev/null
+fts_proxy=#  SELECT rds.id,
+      convert_from(pgp_pub_decrypt(fname::bytea, ks.priv,''::text)::bytea,'SQL_ASCII'::name),
+      convert_from(pgp_pub_decrypt(lname::bytea, ks.priv,''::text)::bytea,'SQL_ASCII'::name),
+      ts_rank( ls._FTS, query ) as rank
+        FROM local_search ls,  __person__pgp_rds_URE  rds  JOIN
+             keys ks USING (keyid),
+             to_tsquery('Mario | Casas | (Casas:*A & Mario:*B) ') query
+        WHERE
+            rds.id = ls.id
+              AND rds.source = 'host1'
+            AND
+            ls._FTS  @@ query
+        ORDER BY rank DESC;
+Time: 12299,691 ms
+
+fts_proxy=#  SELECT rds.id,
+      convert_from(pgp_pub_decrypt(fname::bytea, ks.priv,''::text)::bytea,'SQL_ASCII'::name),
+      convert_from(pgp_pub_decrypt(lname::bytea, ks.priv,''::text)::bytea,'SQL_ASCII'::name),
+      ts_rank( ls._FTS, query ) as rank
+        FROM local_search ls,  __person__pgp_rds  rds  JOIN
+             keys ks USING (keyid),
+             to_tsquery('Mario | Casas | (Casas:*A & Mario:*B) ') query
+        WHERE
+            rds.id = ls.id
+              AND rds.source = 'host1'
+            AND
+            ls._FTS  @@ query
+        ORDER BY rank DESC;
+Time: 20249,719 ms
+
+-- AFTER ANALYZE on the FOREIGN TABLE __person_pgp_rds (in the local server)
+
+Time: 1656,912 ms
+
+```
+
+After analyzing both foreign tables , the execution time difference was calculated
+at 11% in favor of using local estimations.
+
+
+> NOTE about UPDATES: it is necessary to code the UPDATE trigger also, in order to
+> decrypt , modify and re-encrypt the data.
 
 
 ### Json/jsonb datatype is here to help
@@ -407,7 +557,9 @@ CREATE TABLE __person__pgp_map
     );
 ```
 
-At insert time, just use a json column instead per column basis. Keep in mind that you will need to deal within the json contents. I found using this easier for insert, but the FTS needs some clean up to avoid insert column names in the `_fts` field at `local_search` tables.
+At insert time, just use a json column instead per column basis. Keep in mind that you will need to deal within the json contents.
+I found using this easier for insert, but the FTS needs some clean up to avoid insert column names in the `_fts` field at `local_search` tables.
+Also, for updates, the jsonb datatype will need extra work when extracting attributes.
 
 
 ## Additional functions used here
